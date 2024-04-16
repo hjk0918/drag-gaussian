@@ -1,4 +1,4 @@
-name: gaussian_splatting
+name: drag_gaussian
 channels:
   - pytorch
   - conda-forge
