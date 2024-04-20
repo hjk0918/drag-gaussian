@@ -7,3 +7,6 @@
 [submodule "SIBR_viewers"]
 	path = SIBR_viewers
 	url = https://gitlab.inria.fr/sibr/sibr_core.git
+[submodule "DragDiffusion"]
+	path = DragDiffusion
+	url = https://github.com/hjk0918/DragDiffusion.git
