@@ -23,4 +23,8 @@ python render_trajectory.py \
     --output_video
 ```
 
-# DragGAN
+# DragDiffusion
+## Generate drag points:
+```
+python scripts/generate_handles.py
+```

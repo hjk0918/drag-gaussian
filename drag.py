@@ -42,9 +42,12 @@ Repeat:
 
 def drag(model_args, opt_args, pipe_args, args):
     gaussians = GaussianModel(model_args.sh_degree)
-    scene = Scene(model_args, gaussians)
+    scene = Scene(model_args, gaussians, shuffle=False)
     gaussians.training_setup(opt_args)
     viewpoint_cams = scene.getTrainCameras().copy()
+    # gt image: viewpoint_cam.original_image
+    # drag points: viewpoint_cam.points
+    # drag mask: viewpoint_cam.mask
     
     bg_color = [1, 1, 1] if model_args.white_background else [0, 0, 0]
     bg = torch.rand((3), device="cuda") if opt_args.random_background \

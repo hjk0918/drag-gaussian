@@ -34,6 +34,8 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    points: np.array = None
+    mask: np.array = None
     
     @property
     def w2c(self):
@@ -232,10 +234,22 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
             FovY = fovy 
             FovX = fovx
+            
+            points = None
+            if "points" in frame.keys():
+                points = np.array(frame["points"], dtype=int)
+            
+            mask = None
+            mode, mask_name = cam_name.split('/')[-2:]
+            mask_path = os.path.join(path, mode, mask_name)
+            if os.path.isfile(mask_path):
+                mask = Image.open(mask_path).convert("L")
+                mask = np.array(mask, dtype=bool)
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
-            
+                            image_path=image_path, image_name=image_name, width=image.size[0], 
+                            height=image.size[1], points=points, mask=mask))
+    
     return cam_infos
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):

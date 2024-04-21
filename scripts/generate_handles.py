@@ -89,9 +89,9 @@ def generate_handles_and_masks(source_path, points, r):
         
         for i, view in enumerate(json_content["frames"]):
             if os.path.basename(view['file_path']) in os.path.basename(cam.image_path):
-                json_content["frames"][i]['handles'] = image_points.tolist()
+                json_content["frames"][i]['points'] = image_points.tolist()
     
-    with open(os.path.join(source_path, "transforms_train_with_handles.json"), 'w') as f:
+    with open(os.path.join(source_path, "transforms_train.json"), 'w') as f:
         json.dump(json_content, f, indent=4)
 
 
