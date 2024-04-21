@@ -13,6 +13,10 @@ from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
+import os
+import shutil as sh
+import torch
+from torchvision.utils import save_image
 
 WARNED = False
 
@@ -80,3 +84,25 @@ def camera_to_JSON(id, camera : Camera):
         'fx' : fov2focal(camera.FovX, camera.width)
     }
     return camera_entry
+
+def render_samples(gaussian_model, viewpoint_cams, render_func, bg, pipe_args, output_folder, drag_step):
+    print(f"Rendering samples of drag step {drag_step}... ", end="")
+    render_folder = os.path.join(output_folder, f'drag_step_{drag_step}/renders')
+    if os.path.exists(render_folder):
+        sh.rmtree(render_folder)
+    os.makedirs(render_folder, exist_ok=True)
+    
+    for viewpoint_idx, viewpoint_cam in enumerate(viewpoint_cams):    
+        image = torch.clamp(
+            render_func(
+                viewpoint_cam,
+                gaussian_model,
+                pipe_args,
+                bg 
+            )["render"], 0.0, 1.0
+        )
+
+        image_gt_rendered = torch.concatenate((viewpoint_cam.original_image.cuda(), image), dim=2)
+        save_image(image_gt_rendered, os.path.join(render_folder, f'gt_vs_render_{viewpoint_idx}.png'))
+        
+    print("Done.")
