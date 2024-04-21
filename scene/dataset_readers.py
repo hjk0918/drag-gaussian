@@ -34,6 +34,26 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    
+    @property
+    def w2c(self):
+        return np.vstack([np.hstack([self.R.T, self.T.reshape(3,1)]), np.array([[0,0,0,1]], dtype=float)])
+    
+    @property
+    def c2w(self):
+        return np.linalg.inv(self.w2c)
+    
+    @property
+    def intrinsic(self):
+        fx = fov2focal(self.FovX, self.width)
+        fy = fov2focal(self.FovY, self.height)
+        cx, cy = self.width // 2, self.height // 2
+        return np.array([
+            [fx, 0, cx],
+            [0, fy, cy],
+            [0, 0, 1]
+        ], dtype=float)
+        
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -197,7 +217,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
             T = w2c[:3, 3]
 
-            image_path = os.path.join(path, cam_name)
+            image_path = os.path.join(cam_name)
             image_name = Path(cam_name).stem
             image = Image.open(image_path)
 
