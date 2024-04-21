@@ -42,9 +42,7 @@ def generate_mask(img, points, r):
     for idx, point_pair in enumerate(points):
         p1, p2 = point_pair[0], point_pair[1]
         x1, y1, x2, y2 = p1[0], p1[1], p2[0], p2[1]
-        dists = point2seg_dist(xv, yv, x1, y1, x2, y2)
-        cv2.imwrite("./dists.png", dists / np.max(dists) * 255)
-        cur_mask = dists <= r
+        cur_mask = point2seg_dist(xv, yv, x1, y1, x2, y2) <= r
         mask = np.logical_or(cur_mask, mask)
     
     return mask
@@ -57,7 +55,8 @@ def draw_points(img, points):
         cv2.arrowedLine(img, point_pair[0], point_pair[1], (255, 255, 255), 4, tipLength=0.5)
     return img
 
-def generate_handles_and_masks(source_path, points):
+def generate_handles_and_masks(source_path, points, r):
+    points = np.array(points, dtype=float)
     N = points.shape[0]
     ones = np.ones((N, 2, 1), dtype=float)
     points_homo = np.concatenate([points, ones], axis=-1)
@@ -81,7 +80,7 @@ def generate_handles_and_masks(source_path, points):
         image_points = image_points.astype(int)
         
         img_with_points = draw_points(cv2.cvtColor(np.copy(cam.image), cv2.COLOR_BGR2RGB), image_points)
-        mask = generate_mask(cam.image, image_points, r=80)
+        mask = generate_mask(cam.image, image_points, r)
         mask = (mask.astype(int) * 255).reshape(*mask.shape, 1)
         
         alpha = 0.8
@@ -107,11 +106,13 @@ if __name__ == '__main__':
     source_path = "data/nerf_synthetic/hotdog"
     
     # points in shape (N x 2 x 3), [[start_point, end_point], ...] 
-    points = np.array([
+    points = [
         [[0.43, -0.36, 0.05], [0.43, -0.75, 0.05]],
-    ], dtype=float)
+    ]
     
-    generate_handles_and_masks(source_path, points)
+    r = 80 # The radius of the capsule shape on 2D
+    
+    generate_handles_and_masks(source_path, points, r)
     
 
         
