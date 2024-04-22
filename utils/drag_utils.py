@@ -127,7 +127,7 @@ def drag_diffusion_update(model,
 
     # prepare optimizable init_code and optimizer
     init_code.requires_grad_(True)
-    optimizer = torch.optim.Adam([init_code], lr=args.lr)
+    optimizer = torch.optim.Adam([init_code], lr=args.latent_lr)
 
     # prepare for point tracking and background regularization
     handle_points_init = copy.deepcopy(handle_points)
@@ -443,7 +443,7 @@ class DragWrapper:
                 self.t,
                 self.handle_points[ind],
                 self.target_points[ind],
-                self.masks[ind],
+                self.masks[ind:ind+1],
                 self.args
             )
 

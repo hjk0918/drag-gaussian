@@ -58,18 +58,24 @@ def drag(model_args, opt_args, pipe_args, drag_args):
     gaussians = GaussianModel(model_args.sh_degree)
     scene = Scene(model_args, gaussians, shuffle=False)
     gaussians.training_setup(opt_args)
-    viewpoint_cams = [viewpoint_cams[i] for i in scene.getTrainCameras().copy()]
-    
-    # Init DragWrapper
-    prompt = ""
-    images = np.stack([(cam.original_image.cpu().permute(1, 2, 0).numpy()*255).astype(np.uint8) for cam in viewpoint_cams], axis=0)
-    masks = np.stack([cam.mask for cam in viewpoint_cams], axis=0)
-    points = [cam.points for cam in viewpoint_cams]
-    drag_wrapper = DragWrapper(images, prompt, points, masks, drag_args)
+    viewpoint_cams = scene.getTrainCameras().copy()
+    viewpoint_cams = [viewpoint_cams[i] for i in selected_viewpoint_indices]
     
     bg_color = [1, 1, 1] if model_args.white_background else [0, 0, 0]
     bg = torch.rand((3), device="cuda") if opt_args.random_background \
         else torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    
+    # Init DragWrapper    
+    prompt = ""
+    images = np.stack([(cam.original_image.cpu().permute(1, 2, 0).numpy()*255).astype(np.uint8) for cam in viewpoint_cams], axis=0)
+    masks = np.stack([cam.mask for cam in viewpoint_cams], axis=0)
+    points = [cam.points.astype(np.float32) for cam in viewpoint_cams]
+    
+    full_h, full_w = images.shape[1:3]
+    drag_args.sup_res_h = int(full_h)
+    drag_args.sup_res_w = int(full_w)
+    drag_wrapper = DragWrapper(images, prompt, points, masks, drag_args)
+    
     
     # Iteratively update the dataset and train gaussians.
     for drag_step in range(1, drag_args.n_pix_step + 1):
@@ -79,6 +85,7 @@ def drag(model_args, opt_args, pipe_args, drag_args):
             for i, viewpoint_cam in enumerate(viewpoint_cams):
                 image = torch.clamp(render(viewpoint_cam, gaussians, pipe_args, bg)['render'], 0.0, 1.0)
                 rendered_training_imgs.append(image)
+        rendered_training_imgs = torch.stack(rendered_training_imgs, dim=0)
         
         # Apply one step diffusion update on rendered training view images.
         updated_training_imgs = drag_wrapper.update(rendered_training_imgs, list(range(len(rendered_training_imgs))))

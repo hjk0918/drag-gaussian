@@ -110,7 +110,17 @@ class DragParams(ParamGroup):
         self.latent_lr = 0.01
         self.start_step = 0
         self.start_layer = 10
-
+        
+        self.n_inference_step = 50
+        self.n_actual_inference_step = round(self.inversion_strength * self.n_inference_step)
+        self.guidance_scale = 1.0
+        self.unet_feature_idx = [3]
+        self.r_m = 1
+        self.r_p = 3
+        
+        self.sup_res_h = None # To be initialized during runtime.
+        self.sup_res_w = None # To be initialized during runtime.
+        
         super().__init__(parser, "Drag Parameters")
 
 def get_combined_args(parser : ArgumentParser):
