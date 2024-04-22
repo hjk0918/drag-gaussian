@@ -320,8 +320,10 @@ class DragWrapper:
         # train lora
         self.lora_path = os.path.join(args.output_path, 'lora_tmp')
 
+        model_path = args.diffusion_model
+
         print(f'training lora: {self.lora_path}')
-        train_lora(images[0], prompt, args.model_path, args.vae_path, self.lora_path,
+        train_lora(images[0], prompt, model_path, args.vae_path, self.lora_path,
                    args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
 
         torch.cuda.empty_cache()
@@ -331,7 +333,7 @@ class DragWrapper:
         scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012,
                             beta_schedule="scaled_linear", clip_sample=False,
                             set_alpha_to_one=False, steps_offset=1)
-        model = DragPipeline.from_pretrained(args.model_path, scheduler=scheduler, 
+        model = DragPipeline.from_pretrained(model_path, scheduler=scheduler, 
                                              torch_dtype=torch.float16)
         # call this function to override unet forward function,
         # so that intermediate features are returned after forward

@@ -10,6 +10,7 @@
 #
 
 import os
+import json
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
@@ -21,13 +22,15 @@ import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
-from arguments import ModelParams, PipelineParams, OptimizationParams
+from arguments import ModelParams, PipelineParams, OptimizationParams, DragParams
 from utils.camera_utils import render_samples
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+
+from utils.drag_utils import DragWrapper
 
 """
 DragGaussian training pipeline:
@@ -138,6 +141,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
+
+    # Init DragWrapper
+    xforms_path = os.path.join(dataset.source_path, "transforms_train.json")
+    assert os.path.exists(xforms_path), "Could not find transforms_train.json file in dataset folder"
+    with open(xforms_path, 'r') as f:
+        xforms = json.load(f)
+
+    points_3d = xforms['points']
+    images = [cam.original_image for cam in scene.getTrainCameras()]
+    drag_wrapper = DragWrapper(images, drag.prompt, )
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -297,6 +310,8 @@ if __name__ == "__main__":
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
+    dp = DragParams(parser)
+
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
@@ -318,7 +333,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    drag(lp.extract(args), op.extract(args), pp.extract(args), args)
+    drag(lp.extract(args), op.extract(args), pp.extract(args), dp.extract(args))
 
     # All done
     print("\nTraining complete.")

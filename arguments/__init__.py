@@ -90,6 +90,29 @@ class OptimizationParams(ParamGroup):
         self.random_background = False
         super().__init__(parser, "Optimization Parameters")
 
+class DragParams(ParamGroup):
+    def __init__(self, parser: ArgumentParser):
+        self.prompt = ""
+        self._output_path = ""
+        self.vae_path = "default"
+        self.diffusion_model = "runwayml/stable-diffusion-v1-5"
+
+        # LoRA parameters
+        self.lora_step = 80
+        self.lora_lr = 0.0005
+        self.lora_batch_size = 4
+        self.lora_rank = 16
+
+        # Drag parameters
+        self.n_pix_step = 80
+        self.lam = 0.1
+        self.inversion_strength = 0.7
+        self.latent_lr = 0.01
+        self.start_step = 0
+        self.start_layer = 10
+
+        super().__init__(parser, "Drag Parameters")
+
 def get_combined_args(parser : ArgumentParser):
     cmdlne_string = sys.argv[1:]
     cfgfile_string = "Namespace()"
