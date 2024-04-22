@@ -39,6 +39,7 @@ from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
 
 from tqdm import tqdm
+from random import randint
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.24.0")
@@ -107,7 +108,7 @@ def encode_prompt(text_encoder, input_ids, attention_mask, text_encoder_use_atte
 # lora_lr: learning rate of lora training
 # lora_rank: the rank of lora
 # save_interval: the frequency of saving lora checkpoints
-def train_lora(image,
+def train_lora(images,
     prompt,
     model_path,
     vae_path,
@@ -278,12 +279,18 @@ def train_lora(image,
             transforms.Normalize([0.5], [0.5]),
         ]
     )
-
+    
+    # Use all the training images to train lora
+    image_idx_stack = None
     for step in tqdm(range(lora_step), desc="training LoRA"):
         unet.train()
         image_batch = []
         image_pil_batch = []
         for _ in range(lora_batch_size):
+            if not image_idx_stack:
+                image_idx_stack = list(range(images.shape[0]))
+            image = images[image_idx_stack.pop(randint(0, len(image_idx_stack)-1))]
+            
             # first store pil image
             image_transformed = image_transforms_pil(Image.fromarray(image))
             image_pil_batch.append(image_transformed)            

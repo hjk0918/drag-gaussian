@@ -313,18 +313,20 @@ def drag_diffusion_update_gen(model,
 
 
 class DragWrapper:
-    def __init__(self, images, prompt, points, args) -> None:
+    def __init__(self, images, prompt, points, masks, args) -> None:
         self.prompt = prompt
         self.args = args
 
         # train lora
         self.lora_path = os.path.join(args.output_path, 'lora_tmp')
-
         model_path = args.diffusion_model
-
-        print(f'training lora: {self.lora_path}')
-        train_lora(images[0], prompt, model_path, args.vae_path, self.lora_path,
-                   args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
+        if not os.path.isfile(os.path.join(self.lora_path, "pytorch_lora_weights.safetensors")):
+            print(f'training lora: {self.lora_path}')
+            # We use all the images to train lora
+            train_lora(images, prompt, model_path, args.vae_path, self.lora_path,
+                    args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
+        else:
+            print("Lora weights exits. Skip lora training!")
 
         torch.cuda.empty_cache()
         
@@ -360,22 +362,32 @@ class DragWrapper:
         images = self.preprocess_image(images, device, dtype=torch.float16)
 
         # preparing editing meta data (handle, target, mask)
-        mask = torch.from_numpy(mask).float() / 255.
-        mask[mask > 0.0] = 1.0
-        mask = rearrange(mask, "b h w -> b 1 h w").cuda()
+        # mask = torch.from_numpy(mask).float() / 255.
+        # mask[mask > 0.0] = 1.0
+        masks = torch.from_numpy(masks).float()
+        masks = rearrange(masks, "b h w -> b 1 h w").cuda()
 
         handle_points = []
         target_points = []
         # here, the point is in x,y coordinate
-        for idx, point in enumerate(points):
-            cur_point = torch.tensor([point[1], point[0]])
-            cur_point = torch.round(cur_point)
-            if idx % 2 == 0:
-                handle_points.append(cur_point)
-            else:
-                target_points.append(cur_point)
-        print('handle points:', handle_points)
-        print('target points:', target_points)
+        for idx, points_single_image in enumerate(points):
+            handle_points_single_image = []
+            target_points_single_image = []
+            for point in points_single_image:
+                handle_point = torch.tensor([point[0, 1], point[0, 0]])
+                target_point = torch.tensor([point[1, 1], point[1, 0]])
+                handle_points_single_image.append(handle_point)
+                target_points_single_image.append(target_point)
+                # cur_point = torch.tensor([point[1], point[0]])
+                # cur_point = torch.round(cur_point)
+                # if idx % 2 == 0:
+                #     handle_points.append(cur_point)
+                # else:
+                #     target_points.append(cur_point)
+            handle_points.append(handle_points_single_image)
+            target_points.append(target_points_single_image)
+        # print('handle points:', handle_points)
+        # print('target points:', target_points)
 
         # obtain text embeddings
         self.text_embeddings = model.get_text_embeddings(prompt)
@@ -408,7 +420,7 @@ class DragWrapper:
         self.handle_points = handle_points
         self.target_points = target_points
 
-    def preprocess_image(image, device, dtype=torch.float32):
+    def preprocess_image(self, image, device, dtype=torch.float32):
         image = torch.from_numpy(image).float() / 127.5 - 1 # [-1, 1]
         image = rearrange(image, "b h w c -> b c h w")
         image = image.to(device, dtype)
