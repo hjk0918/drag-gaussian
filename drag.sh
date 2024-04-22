@@ -6,4 +6,5 @@ python drag.py \
     --start_ply_path output/hotdog/point_cloud/iteration_30000/point_cloud.ply \
     ---num_drag_steps 50 \
     --iterations 5000 \
-    --eval
+    --eval \
+    --output_path output/hotdog
