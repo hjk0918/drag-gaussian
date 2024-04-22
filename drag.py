@@ -43,13 +43,22 @@ Repeat:
     3. Replace the training dataset with the updated training view images.
     4. Train the gaussians until converge with the new dataset. 
 """
+# Selected dragging viewpoints for hotdog scene
+selected_viewpoint_indices = [
+    0, 1, 2, 3, 4, 5, 7, 9, 11, 12, 13, 14, 16, 17, 18, 19, 20, 
+    21, 22, 23, 24, 26, 28, 29, 30, 31, 32, 33, 37, 38, 
+    41, 42, 43, 44, 45, 47, 48, 51, 52, 53, 55, 56, 57, 58, 60,
+    61, 62, 63, 64, 67, 68, 71, 73, 74, 76, 78, 80, 
+    83, 85, 86, 88, 90, 92, 96, 98, 99
+]
 
-def drag(model_args, opt_args, pipe_args, drag_args, args):
+
+def drag(model_args, opt_args, pipe_args, drag_args):
     # Init gaussians
     gaussians = GaussianModel(model_args.sh_degree)
     scene = Scene(model_args, gaussians, shuffle=False)
     gaussians.training_setup(opt_args)
-    viewpoint_cams = scene.getTrainCameras().copy()
+    viewpoint_cams = [viewpoint_cams[i] for i in scene.getTrainCameras().copy()]
     
     # Init DragWrapper
     prompt = ""
@@ -62,18 +71,21 @@ def drag(model_args, opt_args, pipe_args, drag_args, args):
     bg = torch.rand((3), device="cuda") if opt_args.random_background \
         else torch.tensor(bg_color, dtype=torch.float32, device="cuda")
     
-    for drag_step in range(1, args.num_drag_steps + 1):
+    # Iteratively update the dataset and train gaussians.
+    for drag_step in range(1, drag_args.n_pix_step + 1):
         # Render training views.
-        rendered_training_views = []
+        rendered_training_imgs = []
         with torch.no_grad():
             for i, viewpoint_cam in enumerate(viewpoint_cams):
                 image = torch.clamp(render(viewpoint_cam, gaussians, pipe_args, bg)['render'], 0.0, 1.0)
-                rendered_training_views.append(image)
+                rendered_training_imgs.append(image)
         
-        # TODO: Apply one step diffusion update on rendered training view images.
+        # Apply one step diffusion update on rendered training view images.
+        updated_training_imgs = drag_wrapper.update(rendered_training_imgs, list(range(len(rendered_training_imgs))))
         
-        # TODO: Replace the training dataset with the updated training view images.
-        # viewpoint_cams = ...
+        # Replace the training dataset with the updated training view images.
+        for i in range(len(viewpoint_cams)):
+            viewpoint_cams[i].original_image = updated_training_imgs[i]
         
         # Train the gaussians until converge with the new dataset. 
         train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_step)
@@ -167,7 +179,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    drag(lp.extract(args), op.extract(args), pp.extract(args), dp.extract(args), args)
+    drag(lp.extract(args), op.extract(args), pp.extract(args), dp.extract(args))
 
     # All done
     print("\nTraining complete.")

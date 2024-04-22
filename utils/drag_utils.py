@@ -364,8 +364,8 @@ class DragWrapper:
         # preparing editing meta data (handle, target, mask)
         # mask = torch.from_numpy(mask).float() / 255.
         # mask[mask > 0.0] = 1.0
-        masks = torch.from_numpy(masks).float()
-        masks = rearrange(masks, "b h w -> b 1 h w").cuda()
+        self.masks = torch.from_numpy(masks).float()
+        self.masks = rearrange(self.masks, "b h w -> b 1 h w").cuda()
 
         handle_points = []
         target_points = []
@@ -441,9 +441,9 @@ class DragWrapper:
                 init_code,
                 self.text_embeddings,
                 self.t,
-                self.handle_points,
-                self.target_points,
-                self.mask,
+                self.handle_points[ind],
+                self.target_points[ind],
+                self.masks[ind],
                 self.args
             )
 
