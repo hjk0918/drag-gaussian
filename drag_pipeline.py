@@ -409,7 +409,7 @@ class DragPipeline(StableDiffusionPipeline):
 
     @torch.no_grad()
     def image2latent(self, image):
-        DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        DEVICE = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
         if type(image) is Image:
             image = np.array(image)
             image = torch.from_numpy(image).float() / 127.5 - 1
@@ -564,7 +564,7 @@ class DragPipeline(StableDiffusionPipeline):
         """
         invert a real image into noise map with determinisc DDIM inversion
         """
-        DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        DEVICE = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
         batch_size = image.shape[0]
         if encoder_hidden_states is None:
             if isinstance(prompt, list):

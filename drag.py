@@ -51,6 +51,7 @@ selected_viewpoint_indices = [
     61, 62, 63, 64, 67, 68, 71, 73, 74, 76, 78, 80, 
     83, 85, 86, 88, 90, 92, 96, 98, 99
 ]
+# selected_viewpoint_indices = selected_viewpoint_indices[::10]
 
 
 def drag(model_args, opt_args, pipe_args, drag_args):
@@ -85,14 +86,14 @@ def drag(model_args, opt_args, pipe_args, drag_args):
             for i, viewpoint_cam in enumerate(viewpoint_cams):
                 image = torch.clamp(render(viewpoint_cam, gaussians, pipe_args, bg)['render'], 0.0, 1.0)
                 rendered_training_imgs.append(image)
-        rendered_training_imgs = torch.stack(rendered_training_imgs, dim=0)
+        rendered_training_imgs = torch.stack(rendered_training_imgs, dim=0).half().to(torch.device("cuda:1"))
         
         # Apply one step diffusion update on rendered training view images.
         updated_training_imgs = drag_wrapper.update(rendered_training_imgs, list(range(len(rendered_training_imgs))))
         
         # Replace the training dataset with the updated training view images.
         for i in range(len(viewpoint_cams)):
-            viewpoint_cams[i].original_image = updated_training_imgs[i]
+            viewpoint_cams[i].original_image = updated_training_imgs[i].squeeze().float().to(torch.device("cuda:0"))
         
         # Train the gaussians until converge with the new dataset. 
         train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_step)

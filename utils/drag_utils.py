@@ -331,7 +331,7 @@ class DragWrapper:
         torch.cuda.empty_cache()
         
         # initialize model
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        device = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
         scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012,
                             beta_schedule="scaled_linear", clip_sample=False,
                             set_alpha_to_one=False, steps_offset=1)
@@ -348,7 +348,7 @@ class DragWrapper:
             ).to(model.vae.device, model.vae.dtype)
 
         # off load model to cpu, which save some memory.
-        model.enable_model_cpu_offload()
+        model.enable_model_cpu_offload(gpu_id=1)
 
         # initialize parameters
         # seed = 42 # random seed used by a lot of people for unknown reason
@@ -365,7 +365,7 @@ class DragWrapper:
         # mask = torch.from_numpy(mask).float() / 255.
         # mask[mask > 0.0] = 1.0
         self.masks = torch.from_numpy(masks).float()
-        self.masks = rearrange(self.masks, "b h w -> b 1 h w").cuda()
+        self.masks = rearrange(self.masks, "b h w -> b 1 h w").to(device)
 
         handle_points = []
         target_points = []
@@ -435,6 +435,10 @@ class DragWrapper:
                                 num_inference_steps=self.n_inference_step,
                                 num_actual_inference_steps=self.n_actual_inference_step)
 
+            init_code = init_code.float()
+            self.text_embeddings = self.text_embeddings.float()
+            self.model.unet = self.model.unet.float()
+
             # feature shape: [1280,16,16], [1280,32,32], [640,64,64], [320,64,64]
             updated_init_code = drag_diffusion_update(
                 self.model,
@@ -446,6 +450,10 @@ class DragWrapper:
                 self.masks[ind:ind+1],
                 self.args
             )
+            
+            updated_init_code = updated_init_code.half()
+            self.text_embeddings = self.text_embeddings.half()
+            self.model.unet = self.model.unet.half()
 
             # empty cache to save memory
             torch.cuda.empty_cache()
