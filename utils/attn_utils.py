@@ -202,6 +202,7 @@ def register_attention_editor_diffusers(model, editor: AttentionBase, attn_proce
     def register_editor(net, count, place_in_unet):
         for name, subnet in net.named_children():
             if net.__class__.__name__ == 'Attention':  # spatial Transformer layer
+                net.old_forward = net.forward
                 if attn_processor == 'attn_proc':
                     net.forward = override_attn_proc_forward(net, editor, place_in_unet)
                 elif attn_processor == 'lora_attn_proc':
@@ -222,3 +223,25 @@ def register_attention_editor_diffusers(model, editor: AttentionBase, attn_proce
         elif "up" in net_name:
             cross_att_count += register_editor(net, 0, "up")
     editor.num_att_layers = cross_att_count
+
+def deregister_attention_editor(model):
+    """
+    Deregister the attention editor from Diffuser Pipeline
+    """
+    def deregister_editor(net, count, place_in_unet):
+        for name, subnet in net.named_children():
+            if net.__class__.__name__ == 'Attention':  # spatial Transformer layer
+                net.forward = net.old_forward
+                return count + 1
+            elif hasattr(net, 'children'):
+                count = deregister_editor(subnet, count, place_in_unet)
+        return count
+
+    cross_att_count = 0
+    for net_name, net in model.unet.named_children():
+        if "down" in net_name:
+            cross_att_count += deregister_editor(net, 0, "down")
+        elif "mid" in net_name:
+            cross_att_count += deregister_editor(net, 0, "mid")
+        elif "up" in net_name:
+            cross_att_count += deregister_editor(net, 0, "up")

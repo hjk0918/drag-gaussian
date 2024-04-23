@@ -44,7 +44,7 @@ from pytorch_lightning import seed_everything
 from tqdm import tqdm
 
 from .lora_utils import train_lora
-from .attn_utils import register_attention_editor_diffusers, MutualSelfAttentionControl
+from .attn_utils import register_attention_editor_diffusers, MutualSelfAttentionControl, deregister_attention_editor
 from .freeu_utils import register_free_upblock2d, register_free_crossattn_upblock2d
 
 
@@ -367,7 +367,7 @@ class DragWrapper:
             ).to(model.vae.device, model.vae.dtype)
 
         # off load model to cpu, which save some memory.
-        model.enable_model_cpu_offload(gpu_id=1)
+        model.enable_model_cpu_offload(device=args.drag_device)
 
         # initialize parameters
         # seed = 42 # random seed used by a lot of people for unknown reason
@@ -415,15 +415,14 @@ class DragWrapper:
 
         # invert the source image
         # the latent code resolution is too small, only 64*64
-
-        # invert_codes = []
-        # for i in tqdm(range(images.shape[0]), desc='invert images'):
-        #     invert_code = model.invert(images[i:i+1], prompt,
-        #                             encoder_hidden_states=text_embeddings,
-        #                             guidance_scale=guidance_scale,
-        #                             num_inference_steps=n_inference_step,
-        #                             num_actual_inference_steps=n_actual_inference_step)
-        #     invert_codes.append(invert_code)
+        self.img_init_code = []
+        for i in tqdm(range(images.shape[0]), desc='invert images'):
+            invert_code = model.invert(images[i:i+1], args.prompt,
+                                    encoder_hidden_states=self.text_embeddings,
+                                    guidance_scale=args.guidance_scale,
+                                    num_inference_steps=args.n_inference_step,
+                                    num_actual_inference_steps=args.n_actual_inference_step)
+            self.img_init_code.append(invert_code.detach())
 
         # empty cache to save memory
         torch.cuda.empty_cache()
@@ -502,43 +501,45 @@ class DragWrapper:
             # empty cache to save memory
             torch.cuda.empty_cache()
 
-            update_image = self.render(updated_init_code)
+            update_image = self.render(ind, updated_init_code)
             updated_images.append(update_image)
             self.img_code[ind] = updated_init_code.detach()
 
         return updated_images
     
-    def render(self, updated_code):
+    def render(self, image_ind, updated_code):
         args = self.args
         # hijack the attention module
         # inject the reference branch to guide the generation
-        # editor = MutualSelfAttentionControl(start_step=args.start_step,
-        #                                     start_layer=args.start_layer,
-        #                                     total_steps=args.n_inference_step,
-        #                                     guidance_scale=args.guidance_scale)
+        editor = MutualSelfAttentionControl(start_step=args.start_step,
+                                            start_layer=args.start_layer,
+                                            total_steps=args.n_inference_step,
+                                            guidance_scale=args.guidance_scale)
         # register_attention_editor_diffusers(model, editor, attn_processor='attn_proc')
-        # register_attention_editor_diffusers(self.model, editor, attn_processor='lora_attn_proc')
+        register_attention_editor_diffusers(self.model, editor, attn_processor='lora_attn_proc')
 
         # inference the synthesized image
-        gen_image = self.model(
-            prompt=self.prompt,
-            encoder_hidden_states=self.text_embeddings,
-            batch_size=1,
-            latents=updated_code,
-            guidance_scale=args.guidance_scale,
-            num_inference_steps=args.n_inference_step,
-            num_actual_inference_steps=args.n_actual_inference_step
-        )
-
         # gen_image = self.model(
         #     prompt=self.prompt,
-        #     encoder_hidden_states=torch.cat([self.text_embeddings]*2, dim=0),
-        #     batch_size=2,
-        #     latents=torch.cat([init_code_orig, updated_code], dim=0),
+        #     encoder_hidden_states=self.text_embeddings,
+        #     batch_size=1,
+        #     latents=updated_code,
         #     guidance_scale=args.guidance_scale,
         #     num_inference_steps=args.n_inference_step,
         #     num_actual_inference_steps=args.n_actual_inference_step
-        # )[1].unsqueeze(dim=0)
+        # )
+
+        gen_image = self.model(
+            prompt=self.prompt,
+            encoder_hidden_states=torch.cat([self.text_embeddings]*2, dim=0),
+            batch_size=2,
+            latents=torch.cat([self.img_init_code[image_ind], updated_code], dim=0),
+            guidance_scale=args.guidance_scale,
+            num_inference_steps=args.n_inference_step,
+            num_actual_inference_steps=args.n_actual_inference_step
+        )[1].unsqueeze(dim=0)
+
+        deregister_attention_editor(self.model)
 
         # resize gen_image into the size of source_image
         # we do this because shape of gen_image will be rounded to multipliers of 8

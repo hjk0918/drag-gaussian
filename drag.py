@@ -57,6 +57,7 @@ selected_viewpoint_indices = selected_viewpoint_indices[::6]
 
 def drag(model_args, opt_args, pipe_args, drag_args):
     # Init gaussians
+    model_args.data_device = drag_args.gs_device
     gaussians = GaussianModel(model_args.sh_degree)
     scene = Scene(model_args, gaussians, shuffle=False)
     gaussians.training_setup(opt_args)
@@ -97,6 +98,7 @@ def drag(model_args, opt_args, pipe_args, drag_args):
             for view in selected_views:
                 viewpoint_cam = viewpoint_cams[view]
                 image = torch.clamp(render(viewpoint_cam, gaussians, pipe_args, bg)['render'], 0.0, 1.0)
+                image = image * 2.0 - 1.0   # normalize to [-1, 1]
                 rendered_training_imgs.append(image)
         rendered_training_imgs = torch.stack(rendered_training_imgs, dim=0).half().to(drag_args.drag_device)
         

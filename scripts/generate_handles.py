@@ -88,7 +88,7 @@ def generate_handles_and_masks(source_path, points, r):
         cv2.imwrite(os.path.join(handle_folder, os.path.basename(cam.image_path)), img_with_points * alpha + mask * (1-alpha))
         
         for i, view in enumerate(json_content["frames"]):
-            if os.path.basename(view['file_path']) in os.path.basename(cam.image_path):
+            if os.path.basename(view['file_path']) == os.path.basename(cam.image_name):
                 json_content["frames"][i]['points'] = image_points.tolist()
     
     with open(os.path.join(source_path, "transforms_train.json"), 'w') as f:
