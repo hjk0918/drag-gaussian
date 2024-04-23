@@ -15,6 +15,8 @@ from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
 import os
 import shutil as sh
+import cv2
+import PIL.Image as Image
 import torch
 from torchvision.utils import save_image
 
@@ -88,10 +90,10 @@ def camera_to_JSON(id, camera : Camera):
 
 def render_samples(gaussian_model, viewpoint_cams, render_func, bg, pipe_args, output_folder, drag_step):
     print(f"Rendering samples of drag step {drag_step}... ", end="")
-    render_folder = os.path.join(output_folder, f'drag_step_{drag_step}/renders')
-    if os.path.exists(render_folder):
-        sh.rmtree(render_folder)
-    os.makedirs(render_folder, exist_ok=True)
+    # render_folder = os.path.join(output_folder, f'drag_step_{drag_step}/renders')
+    # if os.path.exists(render_folder):
+    #     sh.rmtree(render_folder)
+    # os.makedirs(render_folder, exist_ok=True)
     
     for viewpoint_idx, viewpoint_cam in enumerate(viewpoint_cams):    
         image = torch.clamp(
@@ -104,6 +106,47 @@ def render_samples(gaussian_model, viewpoint_cams, render_func, bg, pipe_args, o
         )
 
         image_gt_rendered = torch.concatenate((viewpoint_cam.original_image.cuda(), image), dim=2)
-        save_image(image_gt_rendered, os.path.join(render_folder, f'gt_vs_render_{viewpoint_idx}.png'))
+        save_image(image_gt_rendered, os.path.join(output_folder, f'gs_{drag_step:03d}_{viewpoint_idx:02d}.png'))
         
     print("Done.")
+
+def draw_points(img, points):
+    # points in shape (N x 2 x 3)
+    for idx, point_pair in enumerate(points):
+        cv2.circle(img, tuple(point_pair[0]), 5, (255, 0, 0), -1)
+        cv2.circle(img, tuple(point_pair[1]), 5, (0, 0, 255), -1)
+        cv2.arrowedLine(img, tuple(point_pair[0]), tuple(point_pair[1]), (255, 255, 255), 2, tipLength=0.1)
+    return img
+
+def visualize_drag(img_inds, original_imgs, masks, viewpoint_cams, points, cur_handles,
+                   drag_step, output_folder):
+    for ind in img_inds:
+        img_orig = original_imgs[ind]
+        mask = masks[ind]
+        img_new = viewpoint_cams[ind].original_image.cpu().squeeze().permute(1, 2, 0)
+        img_new = np.ascontiguousarray(img_new.numpy().astype(np.float32))
+
+        img_points = points[ind]
+        img_handles = cur_handles[ind]
+
+        img_orig = img_orig.astype(np.float32) / 255
+        img_orig[~mask] *= 0.5
+
+        init_pairs = []
+        cur_pairs = []
+        for point, handle in zip(img_points, img_handles):
+            # point in (x, y), handle in (y, x)
+            init_handle = (point[0, 0], point[0, 1])
+            target = (point[1, 0], point[1, 1])
+            handle = handle.to("cpu", torch.int32).numpy()
+            cur_handle = (handle[1], handle[0])
+
+            init_pairs.append((init_handle, target))
+            cur_pairs.append((cur_handle, target))
+
+        img_orig = draw_points(img_orig, init_pairs)
+        img_new = draw_points(img_new, cur_pairs)
+
+        img = np.concatenate((img_orig, img_new), axis=1)
+        img = np.clip(img * 255 + 0.5, 0, 255).astype(np.uint8)
+        Image.fromarray(img).save(os.path.join(output_folder, f'drag_{drag_step:03d}_{ind:02d}.png'))

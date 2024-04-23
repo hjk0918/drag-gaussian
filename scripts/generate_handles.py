@@ -52,7 +52,7 @@ def draw_points(img, points):
     for idx, point_pair in enumerate(points):
         cv2.circle(img, tuple(point_pair[0]), 10, (255, 0, 0), -1)
         cv2.circle(img, tuple(point_pair[1]), 10, (0, 0, 255), -1)
-        cv2.arrowedLine(img, point_pair[0], point_pair[1], (255, 255, 255), 4, tipLength=0.5)
+        cv2.arrowedLine(img, tuple(point_pair[0]), tuple(point_pair[1]), (255, 255, 255), 4, tipLength=0.5)
     return img
 
 def generate_handles_and_masks(source_path, points, r):
@@ -113,11 +113,4 @@ if __name__ == '__main__':
     r = 80 # The radius of the capsule shape on 2D
     
     generate_handles_and_masks(source_path, points, r)
-    
-
-        
-    
-    
-    
-    
     

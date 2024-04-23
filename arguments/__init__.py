@@ -12,6 +12,7 @@
 from argparse import ArgumentParser, Namespace
 import sys
 import os
+import torch
 
 class GroupParams:
     pass
@@ -102,9 +103,10 @@ class DragParams(ParamGroup):
         self.lora_lr = 0.0005
         self.lora_batch_size = 4
         self.lora_rank = 16
+        self.share_lora = False
 
         # Drag parameters
-        self.n_pix_step = 80
+        self.n_pix_step = 5
         self.lam = 0.1
         self.inversion_strength = 0.7
         self.latent_lr = 0.01
@@ -120,8 +122,25 @@ class DragParams(ParamGroup):
         
         self.sup_res_h = None # To be initialized during runtime.
         self.sup_res_w = None # To be initialized during runtime.
+
+        # Gaussian fine-tuning parameters
+        self.n_iters = 5000  # number of total fine-tuning iterations
+        self.n_drag_views = 1   # number of views to drag per step
+        self.n_gs_views = 8    # number of views to fine-tune per step
+        self.gs_save_interval = 50
+        self.vis_interval = 10
+
+        self.gs_device = "cuda:0"
+        self.drag_device = "cuda:1"
         
         super().__init__(parser, "Drag Parameters")
+
+    def extract(self, args):
+        g = super().extract(args)
+        g.n_actual_inference_step = round(g.inversion_strength * g.n_inference_step)
+        g.gs_device = torch.device(g.gs_device)
+        g.drag_device = torch.device(g.drag_device)
+        return g
 
 def get_combined_args(parser : ArgumentParser):
     cmdlne_string = sys.argv[1:]

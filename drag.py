@@ -13,6 +13,7 @@ import os
 import json
 import torch
 import numpy as np
+import shutil
 from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
@@ -24,7 +25,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams, DragParams
-from utils.camera_utils import render_samples
+from utils.camera_utils import render_samples, visualize_drag
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -51,7 +52,7 @@ selected_viewpoint_indices = [
     61, 62, 63, 64, 67, 68, 71, 73, 74, 76, 78, 80, 
     83, 85, 86, 88, 90, 92, 96, 98, 99
 ]
-# selected_viewpoint_indices = selected_viewpoint_indices[::10]
+selected_viewpoint_indices = selected_viewpoint_indices[::10]
 
 
 def drag(model_args, opt_args, pipe_args, drag_args):
@@ -77,37 +78,64 @@ def drag(model_args, opt_args, pipe_args, drag_args):
     drag_args.sup_res_w = int(full_w)
     drag_wrapper = DragWrapper(images, prompt, points, masks, drag_args)
     
-    
+    global_gs_iter = 0
+    render_dir = os.path.join(model_args.model_path, "renders")
+    if os.path.exists(render_dir):
+        shutil.rmtree(render_dir)
+
+    os.makedirs(render_dir, exist_ok=True)
+
     # Iteratively update the dataset and train gaussians.
-    for drag_step in range(1, drag_args.n_pix_step + 1):
+    # for n_iters steps
+    #   1. run dragdiffusion from n_drag_views viewpoints for n_pix_step steps using rendered images
+    #   2. train gaussian from n_gs_views viewpoints (n_gs_views iters) using edited images
+    for iter in range(1, drag_args.n_iters + 1):
+        selected_views = np.random.permutation(len(viewpoint_cams))[:drag_args.n_drag_views]
+
         # Render training views.
         rendered_training_imgs = []
         with torch.no_grad():
-            for i, viewpoint_cam in enumerate(viewpoint_cams):
+            for view in selected_views:
+                viewpoint_cam = viewpoint_cams[view]
                 image = torch.clamp(render(viewpoint_cam, gaussians, pipe_args, bg)['render'], 0.0, 1.0)
                 rendered_training_imgs.append(image)
-        rendered_training_imgs = torch.stack(rendered_training_imgs, dim=0).half().to(torch.device("cuda:1"))
+        rendered_training_imgs = torch.stack(rendered_training_imgs, dim=0).half().to(drag_args.drag_device)
         
         # Apply one step diffusion update on rendered training view images.
-        updated_training_imgs = drag_wrapper.update(rendered_training_imgs, list(range(len(rendered_training_imgs))))
+        updated_training_imgs = drag_wrapper.update(rendered_training_imgs, selected_views)
         
         # Replace the training dataset with the updated training view images.
-        for i in range(len(viewpoint_cams)):
-            viewpoint_cams[i].original_image = updated_training_imgs[i].squeeze().float().to(torch.device("cuda:0"))
+        for i, ind in enumerate(selected_views):
+            viewpoint_cams[ind].original_image = updated_training_imgs[i].squeeze().float().to(drag_args.gs_device)
         
-        # Train the gaussians until converge with the new dataset. 
-        train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_step)
+        # Fine-tune gasussians with the new dataset. 
+        train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_args)
+
+        # Render training views and save.
+        if iter % drag_args.vis_interval == 0:
+            # render_samples(gaussians, viewpoint_cams, render, bg, pipe_args, render_dir, iter)
+            visualize_drag(selected_views, images, masks, viewpoint_cams, points, drag_wrapper.handle_points, 
+                           iter, render_dir)
+        
+        # Save gaussians
+        if iter % drag_args.gs_save_interval == 0:
+            scene.drag_gaussian_save(iter)
+
+    render_samples(gaussians, viewpoint_cams, render, bg, pipe_args, render_dir, drag_args.n_iters)
+    visualize_drag(selected_views, images, masks, viewpoint_cams, points, drag_wrapper.handle_points,
+                   drag_args.n_iters, render_dir)
+    scene.drag_gaussian_save(drag_args.n_iters)
     
 
-def train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_step):
-    """ Train the gaussians until converge. """
+def train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_args):
+    """ Fine-tune the gaussians. """
     
     viewpoint_idx_stack = None
     ema_loss_for_log = 0.0
-    progress_bar = tqdm(range(opt_args.iterations), desc="Training progress")
-    for iteration in range(1, opt_args.iterations + 1):
-        
-        gaussians.update_learning_rate(iteration)
+    progress_bar = tqdm(range(drag_args.n_gs_views), desc="Fine-tuning Gaussians")
+    for iteration in range(1, drag_args.n_gs_views + 1):
+
+        # gaussians.update_learning_rate(iteration)
         
         if not viewpoint_idx_stack:
             viewpoint_idx_stack = list(range(len(viewpoint_cams)))
@@ -129,33 +157,26 @@ def train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, 
             if iteration % 10 == 0:
                 progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 progress_bar.update(10)
-            if iteration == opt_args.iterations:
+            if iteration == drag_args.n_gs_views:
                 progress_bar.close()
             
             # Densification
-            if iteration < opt_args.densify_until_iter:
-                # Keep track of max radii in image-space for pruning
-                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            # if iteration < opt_args.densify_until_iter:
+            #     # Keep track of max radii in image-space for pruning
+            #     gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+            #     gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if iteration > opt_args.densify_from_iter and iteration % opt_args.densification_interval == 0:
-                    size_threshold = 20 if iteration > opt_args.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt_args.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+            #     if iteration > opt_args.densify_from_iter and iteration % opt_args.densification_interval == 0:
+            #         size_threshold = 20 if iteration > opt_args.opacity_reset_interval else None
+            #         gaussians.densify_and_prune(opt_args.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
                 
-                if iteration % opt_args.opacity_reset_interval == 0 or (model_args.white_background and iteration == opt_args.densify_from_iter):
-                    gaussians.reset_opacity()
+            #     if iteration % opt_args.opacity_reset_interval == 0 or (model_args.white_background and iteration == opt_args.densify_from_iter):
+            #         gaussians.reset_opacity()
 
             # Optimizer step
-            if iteration < opt_args.iterations:
+            if iteration < drag_args.n_gs_views:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
-                
-    # Render training views and save.
-    render_samples(gaussians, viewpoint_cams, render, bg, pipe_args, scene.model_path, drag_step)
-    
-    # Save gaussians
-    scene.drag_gaussian_save(drag_step)
-
 
 
 if __name__ == "__main__":
@@ -175,7 +196,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
-    parser.add_argument("--num_drag_steps", type=int, default=50, help="The number of diffusion inversion steps.")
+
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     

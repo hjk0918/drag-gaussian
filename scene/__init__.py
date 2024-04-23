@@ -90,7 +90,8 @@ class Scene:
     
     def drag_gaussian_save(self, drag_step):
         print(f"Saving gaussians of drag step {drag_step}... ", end="")
-        self.gaussians.save_ply(os.path.join(self.model_path, f"drag_step_{drag_step}/point_cloud.ply"))
+        self.gaussians.save_ply(os.path.join(self.model_path, "point_cloud",
+                                             f"drag_step_{drag_step}", "point_cloud.ply"))
         print("Done.")
 
     def getTrainCameras(self, scale=1.0):

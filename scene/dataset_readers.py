@@ -241,7 +241,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             
             mask = None
             mode, mask_name = cam_name.split('/')[-2:]
-            mask_path = os.path.join(path, mode, mask_name)
+            mask_path = os.path.join(path, mode+'_mask', mask_name)
             if os.path.isfile(mask_path):
                 mask = Image.open(mask_path).convert("L")
                 mask = np.array(mask, dtype=bool)

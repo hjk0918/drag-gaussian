@@ -49,7 +49,7 @@ def poses2cams(poses, fx=900, fy=900, width=800, height=800):
 def render_views(views:list, dataset:ModelParams, iteration:int, pipeline:PipelineParams, args):
     with torch.no_grad():
         gaussians = GaussianModel(dataset.sh_degree)
-        gaussians.load_ply(os.path.join(args.model_path, "point_cloud/iteration_7000/point_cloud.ply"))
+        gaussians.load_ply(os.path.join(args.model_path, args.pcd))
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -91,6 +91,8 @@ if __name__ == '__main__':
     parser.add_argument("--output_video", action="store_true", default=False, 
                         help="if store true, save the frames as a video, otherwise, save frames as separate images.")
     parser.add_argument("--num_frames", type=int, default=3600, help="number of frames to render")
+    parser.add_argument("--pcd", type=str, default="point_cloud/iteration_7000/point_cloud.ply",
+                        help="path to the model to render")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
     args.global_illumination = False

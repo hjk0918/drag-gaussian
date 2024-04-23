@@ -136,7 +136,7 @@ def drag_diffusion_update(model,
 
     # prepare amp scaler for mixed-precision training
     scaler = torch.cuda.amp.GradScaler()
-    for step_idx in range(args.n_pix_step):
+    for step_idx in range(args.n_pix_step + 1):
         with torch.autocast(device_type='cuda', dtype=torch.float16):
             unet_output, F1 = model.forward_unet_features(init_code, t,
                 encoder_hidden_states=text_embeddings,
@@ -147,6 +147,10 @@ def drag_diffusion_update(model,
             if step_idx != 0:
                 handle_points = point_tracking(F0, F1, handle_points, handle_points_init, args)
                 print('new handle points', handle_points)
+
+            # only do point tracking in the final step
+            if step_idx == args.n_pix_step:
+                break
 
             # break if all handle points have reached the targets
             if check_handle_reach_target(handle_points, target_points):
@@ -318,20 +322,35 @@ class DragWrapper:
         self.args = args
 
         # train lora
-        self.lora_path = os.path.join(args.output_path, 'lora_tmp')
+        self.lora_path = os.path.join(args.output_path, 'lora_weights')
         model_path = args.diffusion_model
-        if not os.path.isfile(os.path.join(self.lora_path, "pytorch_lora_weights.safetensors")):
-            print(f'training lora: {self.lora_path}')
-            # We use all the images to train lora
-            train_lora(images, prompt, model_path, args.vae_path, self.lora_path,
-                    args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
+
+        if args.share_lora:
+            print('using shared LoRA weights from all views')
+            if not os.path.isfile(os.path.join(self.lora_path, "pytorch_lora_weights.safetensors")):
+                print(f'training lora: {self.lora_path}')
+                # We use all the images to train lora
+                train_lora(images, prompt, model_path, args.vae_path, self.lora_path,
+                        args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
+            else:
+                print("Lora weights exits. Skip lora training!")
         else:
-            print("Lora weights exits. Skip lora training!")
+            print('using individual LoRA weights for each view')
+            for i in range(len(images)):
+                view_path = os.path.join(self.lora_path, f'view_{i:03d}')
+                if not os.path.isfile(os.path.join(view_path, "pytorch_lora_weights.safetensors")):
+                    print(f'training lora for view {i+1}/{len(images)}')
+                    train_lora(images[i:i+1], prompt, model_path, args.vae_path, view_path,
+                            args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
+                else:
+                    print(f"LoRA weights for view {i} exits. Skip lora training!")
+
+                torch.cuda.empty_cache()
 
         torch.cuda.empty_cache()
         
         # initialize model
-        device = torch.device("cuda:1") if torch.cuda.is_available() else torch.device("cpu")
+        device = args.drag_device
         scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012,
                             beta_schedule="scaled_linear", clip_sample=False,
                             set_alpha_to_one=False, steps_offset=1)
@@ -356,10 +375,12 @@ class DragWrapper:
 
         # print("applying default parameters")
         # model.unet.set_default_attn_processor()
-        print("applying lora: " + self.lora_path)
-        model.unet.load_attn_procs(self.lora_path)
+        if args.share_lora:
+            print("applying lora: " + self.lora_path)
+            model.unet.load_attn_procs(self.lora_path)
 
         images = self.preprocess_image(images, device, dtype=torch.float16)
+        self.images = images
 
         # preparing editing meta data (handle, target, mask)
         # mask = torch.from_numpy(mask).float() / 255.
@@ -394,9 +415,6 @@ class DragWrapper:
 
         # invert the source image
         # the latent code resolution is too small, only 64*64
-        self.n_inference_step = 50
-        self.n_actual_inference_step = round(args.inversion_strength * self.n_inference_step)
-        self.guidance_scale = 1.0
 
         # invert_codes = []
         # for i in tqdm(range(images.shape[0]), desc='invert images'):
@@ -411,14 +429,15 @@ class DragWrapper:
         torch.cuda.empty_cache()
 
         # self.init_code = torch.concat(invert_codes, dim=0)
-        model.scheduler.set_timesteps(self.n_inference_step)
-        self.t = model.scheduler.timesteps[self.n_inference_step - self.n_actual_inference_step]
+        model.scheduler.set_timesteps(args.n_inference_step)
+        self.t = model.scheduler.timesteps[args.n_inference_step - args.n_actual_inference_step]
 
         self.model = model
 
         self.init_handles_points = deepcopy(handle_points)
         self.handle_points = handle_points
         self.target_points = target_points
+        self.img_code = [None] * len(images)
 
     def preprocess_image(self, image, device, dtype=torch.float32):
         image = torch.from_numpy(image).float() / 127.5 - 1 # [-1, 1]
@@ -426,14 +445,39 @@ class DragWrapper:
         image = image.to(device, dtype)
         return image
 
+    def track_points(self, prev_code, cur_code, handles):
+        args = self.args
+        with torch.no_grad():
+            _, F0 = self.model.forward_unet_features(prev_code, self.t,
+                encoder_hidden_states=self.text_embeddings,
+                layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, 
+                interp_res_w=args.sup_res_w)
+            _, F1 = self.model.forward_unet_features(cur_code, self.t,
+                encoder_hidden_states=self.text_embeddings,
+                layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, 
+                interp_res_w=args.sup_res_w)
+
+            handles_copy = deepcopy(handles)
+            handles = point_tracking(F0, F1, handles, handles_copy, args)
+            print('new handle points', handles)
+
     def update(self, images, image_inds):
+        args = self.args
         updated_images = []
         for i, ind in tqdm(enumerate(image_inds), desc='update images'):
+            if not args.share_lora:
+                lora_path = os.path.join(self.lora_path, f'view_{ind:03d}')
+                self.model.unet.load_attn_procs(lora_path)
+
             init_code = self.model.invert(images[i:i+1], self.prompt,
                                 encoder_hidden_states=self.text_embeddings,
-                                guidance_scale=self.guidance_scale,
-                                num_inference_steps=self.n_inference_step,
-                                num_actual_inference_steps=self.n_actual_inference_step)
+                                guidance_scale=args.guidance_scale,
+                                num_inference_steps=args.n_inference_step,
+                                num_actual_inference_steps=args.n_actual_inference_step)
+
+            if self.img_code[ind] is not None:
+                # do point tracking on the rendered image
+                self.track_points(self.img_code[ind], init_code, self.handle_points[ind])
 
             init_code = init_code.float()
             self.text_embeddings = self.text_embeddings.float()
@@ -460,10 +504,12 @@ class DragWrapper:
 
             update_image = self.render(updated_init_code)
             updated_images.append(update_image)
+            self.img_code[ind] = updated_init_code.detach()
 
         return updated_images
     
     def render(self, updated_code):
+        args = self.args
         # hijack the attention module
         # inject the reference branch to guide the generation
         # editor = MutualSelfAttentionControl(start_step=self.args.start_step,
@@ -477,11 +523,11 @@ class DragWrapper:
         gen_image = self.model(
             prompt=self.prompt,
             encoder_hidden_states=self.text_embeddings,
-            batch_size=2,
+            batch_size=1,
             latents=updated_code,
-            guidance_scale=self.guidance_scale,
-            num_inference_steps=self.n_inference_step,
-            num_actual_inference_steps=self.n_actual_inference_step
+            guidance_scale=args.guidance_scale,
+            num_inference_steps=args.n_inference_step,
+            num_actual_inference_steps=args.n_actual_inference_step
         )
 
         # resize gen_image into the size of source_image
