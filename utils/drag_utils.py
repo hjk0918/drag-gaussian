@@ -317,9 +317,9 @@ def drag_diffusion_update_gen(model,
 
 
 class DragWrapper:
-    def __init__(self, images, prompt, points, masks, args) -> None:
-        self.prompt = prompt
+    def __init__(self, images, points, masks, args) -> None:
         self.args = args
+        self.prompt = args.prompt
 
         # train lora
         self.lora_path = os.path.join(args.output_path, 'lora_weights')
@@ -330,7 +330,7 @@ class DragWrapper:
             if not os.path.isfile(os.path.join(self.lora_path, "pytorch_lora_weights.safetensors")):
                 print(f'training lora: {self.lora_path}')
                 # We use all the images to train lora
-                train_lora(images, prompt, model_path, args.vae_path, self.lora_path,
+                train_lora(images, args.prompt, model_path, args.vae_path, self.lora_path,
                         args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
             else:
                 print("Lora weights exits. Skip lora training!")
@@ -340,7 +340,7 @@ class DragWrapper:
                 view_path = os.path.join(self.lora_path, f'view_{i:03d}')
                 if not os.path.isfile(os.path.join(view_path, "pytorch_lora_weights.safetensors")):
                     print(f'training lora for view {i+1}/{len(images)}')
-                    train_lora(images[i:i+1], prompt, model_path, args.vae_path, view_path,
+                    train_lora(images[i:i+1], args.prompt, model_path, args.vae_path, view_path,
                             args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
                 else:
                     print(f"LoRA weights for view {i} exits. Skip lora training!")
@@ -411,7 +411,7 @@ class DragWrapper:
         # print('target points:', target_points)
 
         # obtain text embeddings
-        self.text_embeddings = model.get_text_embeddings(prompt)
+        self.text_embeddings = model.get_text_embeddings(args.prompt)
 
         # invert the source image
         # the latent code resolution is too small, only 64*64
@@ -512,10 +512,10 @@ class DragWrapper:
         args = self.args
         # hijack the attention module
         # inject the reference branch to guide the generation
-        # editor = MutualSelfAttentionControl(start_step=self.args.start_step,
-        #                                     start_layer=self.args.start_layer,
-        #                                     total_steps=self.n_inference_step,
-        #                                     guidance_scale=self.guidance_scale)
+        # editor = MutualSelfAttentionControl(start_step=args.start_step,
+        #                                     start_layer=args.start_layer,
+        #                                     total_steps=args.n_inference_step,
+        #                                     guidance_scale=args.guidance_scale)
         # register_attention_editor_diffusers(model, editor, attn_processor='attn_proc')
         # register_attention_editor_diffusers(self.model, editor, attn_processor='lora_attn_proc')
 
@@ -529,6 +529,16 @@ class DragWrapper:
             num_inference_steps=args.n_inference_step,
             num_actual_inference_steps=args.n_actual_inference_step
         )
+
+        # gen_image = self.model(
+        #     prompt=self.prompt,
+        #     encoder_hidden_states=torch.cat([self.text_embeddings]*2, dim=0),
+        #     batch_size=2,
+        #     latents=torch.cat([init_code_orig, updated_code], dim=0),
+        #     guidance_scale=args.guidance_scale,
+        #     num_inference_steps=args.n_inference_step,
+        #     num_actual_inference_steps=args.n_actual_inference_step
+        # )[1].unsqueeze(dim=0)
 
         # resize gen_image into the size of source_image
         # we do this because shape of gen_image will be rounded to multipliers of 8

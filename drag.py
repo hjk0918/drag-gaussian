@@ -52,7 +52,7 @@ selected_viewpoint_indices = [
     61, 62, 63, 64, 67, 68, 71, 73, 74, 76, 78, 80, 
     83, 85, 86, 88, 90, 92, 96, 98, 99
 ]
-selected_viewpoint_indices = selected_viewpoint_indices[::10]
+selected_viewpoint_indices = selected_viewpoint_indices[::6]
 
 
 def drag(model_args, opt_args, pipe_args, drag_args):
@@ -68,7 +68,6 @@ def drag(model_args, opt_args, pipe_args, drag_args):
         else torch.tensor(bg_color, dtype=torch.float32, device="cuda")
     
     # Init DragWrapper    
-    prompt = ""
     images = np.stack([(cam.original_image.cpu().permute(1, 2, 0).numpy()*255).astype(np.uint8) for cam in viewpoint_cams], axis=0)
     masks = np.stack([cam.mask for cam in viewpoint_cams], axis=0)
     points = [cam.points.astype(np.float32) for cam in viewpoint_cams]
@@ -76,7 +75,7 @@ def drag(model_args, opt_args, pipe_args, drag_args):
     full_h, full_w = images.shape[1:3]
     drag_args.sup_res_h = int(full_h)
     drag_args.sup_res_w = int(full_w)
-    drag_wrapper = DragWrapper(images, prompt, points, masks, drag_args)
+    drag_wrapper = DragWrapper(images, points, masks, drag_args)
     
     global_gs_iter = 0
     render_dir = os.path.join(model_args.model_path, "renders")
