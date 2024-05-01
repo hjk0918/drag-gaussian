@@ -130,6 +130,8 @@ class DragParams(ParamGroup):
         self.gs_save_interval = 50
         self.vis_interval = 10
 
+        self.densify_grad_percentile = 0.05 # densify gaussians with top k% gradients
+
         self.gs_device = "cuda:0"
         self.drag_device = "cuda:1"
         

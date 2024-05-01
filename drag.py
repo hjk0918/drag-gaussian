@@ -52,13 +52,13 @@ selected_viewpoint_indices = [
     61, 62, 63, 64, 67, 68, 71, 73, 74, 76, 78, 80, 
     83, 85, 86, 88, 90, 92, 96, 98, 99
 ]
-selected_viewpoint_indices = selected_viewpoint_indices[::6]
+selected_viewpoint_indices = selected_viewpoint_indices[::3]
 
 
 def drag(model_args, opt_args, pipe_args, drag_args):
     # Init gaussians
     model_args.data_device = drag_args.gs_device
-    gaussians = GaussianModel(model_args.sh_degree)
+    gaussians = GaussianModel(model_args.sh_degree, drag_args.gs_device)
     scene = Scene(model_args, gaussians, shuffle=False)
     gaussians.training_setup(opt_args)
     viewpoint_cams = scene.getTrainCameras().copy()
@@ -84,6 +84,7 @@ def drag(model_args, opt_args, pipe_args, drag_args):
         shutil.rmtree(render_dir)
 
     os.makedirs(render_dir, exist_ok=True)
+    gaussians.record_anchor()
 
     # Iteratively update the dataset and train gaussians.
     # for n_iters steps
@@ -110,7 +111,9 @@ def drag(model_args, opt_args, pipe_args, drag_args):
             viewpoint_cams[ind].original_image = updated_training_imgs[i].squeeze().float().to(drag_args.gs_device)
         
         # Fine-tune gasussians with the new dataset. 
-        train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_args)
+        train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_args,
+                        global_gs_iter)
+        global_gs_iter += drag_args.n_gs_views
 
         # Render training views and save.
         if iter % drag_args.vis_interval == 0:
@@ -128,15 +131,34 @@ def drag(model_args, opt_args, pipe_args, drag_args):
     scene.drag_gaussian_save(drag_args.n_iters)
     
 
-def train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_args):
+def anchor_loss(gaussians, drag_args):
+    (xyz, feat_dc, feat_rest, scale, rot, opacity) = gaussians.get_anchor()
+    loss = 0.0
+
+    def anchor_loss_with_gen(anchor, param, weight):
+        return torch.mean(((anchor - param) ** 2) * weight)
+
+    gen_weight = 0.1 * gaussians.generation
+    loss += anchor_loss_with_gen(xyz, gaussians._xyz, gen_weight)
+    loss += anchor_loss_with_gen(feat_dc, gaussians._features_dc, gen_weight)
+    loss += anchor_loss_with_gen(feat_rest, gaussians._features_rest, gen_weight)
+    loss += anchor_loss_with_gen(scale, gaussians._scaling, gen_weight)
+    loss += anchor_loss_with_gen(rot, gaussians._rotation, gen_weight)
+    loss += anchor_loss_with_gen(opacity, gaussians._opacity, gen_weight)
+
+    return loss
+
+
+def train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, pipe_args, drag_args,
+                    global_iter):
     """ Fine-tune the gaussians. """
     
     viewpoint_idx_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(drag_args.n_gs_views), desc="Fine-tuning Gaussians")
     for iteration in range(1, drag_args.n_gs_views + 1):
-
-        # gaussians.update_learning_rate(iteration)
+        global_iter += 1
+        gaussians.update_learning_rate(global_iter)
         
         if not viewpoint_idx_stack:
             viewpoint_idx_stack = list(range(len(viewpoint_cams)))
@@ -147,9 +169,14 @@ def train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, 
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         
         # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
+        gt_image = viewpoint_cam.original_image.to(image.device)
+        # mask = torch.from_numpy(viewpoint_cam.mask).to(torch.float32).to(image.device)
+        # image = image * mask
+        # gt_image = gt_image * mask
+
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt_args.lambda_dssim) * Ll1 + opt_args.lambda_dssim * (1.0 - ssim(image, gt_image))
+        loss += anchor_loss(gaussians, drag_args)
         loss.backward()
         
         with torch.no_grad():
@@ -162,17 +189,22 @@ def train_gaussians(gaussians, viewpoint_cams, scene, bg, model_args, opt_args, 
                 progress_bar.close()
             
             # Densification
-            # if iteration < opt_args.densify_until_iter:
-            #     # Keep track of max radii in image-space for pruning
-            #     gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-            #     gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+            if global_iter < opt_args.densify_until_iter:
+                # Keep track of max radii in image-space for pruning
+                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-            #     if iteration > opt_args.densify_from_iter and iteration % opt_args.densification_interval == 0:
-            #         size_threshold = 20 if iteration > opt_args.opacity_reset_interval else None
-            #         gaussians.densify_and_prune(opt_args.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+                if global_iter > opt_args.densify_from_iter and global_iter % opt_args.densification_interval == 0:
+                    size_threshold = 20 if global_iter > opt_args.opacity_reset_interval else None
+
+                    grad_percentile = 1 - drag_args.densify_grad_percentile
+
+                    gaussians.densify_and_prune(opt_args.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold,
+                                                grad_percentile)
+                    gaussians.record_anchor()
                 
-            #     if iteration % opt_args.opacity_reset_interval == 0 or (model_args.white_background and iteration == opt_args.densify_from_iter):
-            #         gaussians.reset_opacity()
+                if global_iter % opt_args.opacity_reset_interval == 0 or (model_args.white_background and global_iter == opt_args.densify_from_iter):
+                    gaussians.reset_opacity()
 
             # Optimizer step
             if iteration < drag_args.n_gs_views:

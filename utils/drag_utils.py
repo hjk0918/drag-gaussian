@@ -333,7 +333,7 @@ class DragWrapper:
                 train_lora(images, args.prompt, model_path, args.vae_path, self.lora_path,
                         args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
             else:
-                print("Lora weights exits. Skip lora training!")
+                print("Found LoRA weights, skip training!")
         else:
             print('using individual LoRA weights for each view')
             for i in range(len(images)):
@@ -343,7 +343,7 @@ class DragWrapper:
                     train_lora(images[i:i+1], args.prompt, model_path, args.vae_path, view_path,
                             args.lora_step, args.lora_lr, args.lora_batch_size, args.lora_rank)
                 else:
-                    print(f"LoRA weights for view {i} exits. Skip lora training!")
+                    print(f"Found LoRA weights for view {i}, skip training!")
 
                 torch.cuda.empty_cache()
 
